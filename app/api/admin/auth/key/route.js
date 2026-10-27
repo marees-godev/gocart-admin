@@ -1,7 +1,51 @@
 import { NextResponse } from 'next/server'
 import { GRAPHQL_ENDPOINT } from '@/lib/apiClient'
 
-const SERVER_ADMIN_KEY = process.env.ADMIN_KEY
+// Match against environment-configured ADMIN_KEY
+const SERVER_ADMIN_KEY = process.env.ADMIN_KEY || process.env.NEXT_PUBLIC_ADMIN_KEY
+
+/**
+ * Backend API verification helper (Preserved for future use when BE endpoint is ready)
+ */
+async function validateKeyWithBackend(key) {
+    try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000)
+
+        const testQuery = JSON.stringify({
+            query: `
+                query VerifyAdminKey {
+                    merchants(limit: 1) {
+                        total
+                    }
+                }
+            `,
+        })
+
+        const response = await fetch(GRAPHQL_ENDPOINT, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Admin-Key': key,
+            },
+            body: testQuery,
+            signal: controller.signal,
+        })
+        clearTimeout(timeoutId)
+
+        const result = await response.json().catch(() => null)
+        if (
+            !result?.errors ||
+            !result.errors.some((e) => /unauthorized|invalid|forbidden/i.test(e.message))
+        ) {
+            return true
+        }
+        return false
+    } catch (netErr) {
+        console.warn('Backend validation check failed:', netErr.message)
+        return false
+    }
+}
 
 export async function POST(request) {
     try {
@@ -15,49 +59,17 @@ export async function POST(request) {
             )
         }
 
-        let isAuthorized = false
+        // Direct match with environment-configured ADMIN_KEY
+        const isAuthorized = Boolean(SERVER_ADMIN_KEY && key === SERVER_ADMIN_KEY.trim())
 
-        // 1. Direct match with server-configured ADMIN_KEY
-        if (SERVER_ADMIN_KEY && key === SERVER_ADMIN_KEY) {
-            isAuthorized = true
-        } else {
-            // 2. Fallback: verify key directly with the backend service
-            try {
-                const controller = new AbortController()
-                const timeoutId = setTimeout(() => controller.abort(), 10000)
-
-                const testQuery = JSON.stringify({
-                    query: `
-                        query VerifyAdminKey {
-                            merchants(limit: 1) {
-                                total
-                            }
-                        }
-                    `,
-                })
-
-                const response = await fetch(GRAPHQL_ENDPOINT, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Admin-Key': key,
-                    },
-                    body: testQuery,
-                    signal: controller.signal,
-                })
-                clearTimeout(timeoutId)
-
-                const result = await response.json().catch(() => null)
-                if (
-                    !result?.errors ||
-                    !result.errors.some((e) => /unauthorized|invalid|forbidden/i.test(e.message))
-                ) {
-                    isAuthorized = true
-                }
-            } catch (netErr) {
-                console.warn('Backend verification check failed:', netErr.message)
-            }
-        }
+        /*
+         * Note: Backend validation logic is kept here for future integration.
+         * Uncomment below once BE validation API is ready:
+         *
+         * if (!isAuthorized) {
+         *     isAuthorized = await validateKeyWithBackend(key)
+         * }
+         */
 
         if (!isAuthorized) {
             return NextResponse.json(
@@ -66,7 +78,7 @@ export async function POST(request) {
             )
         }
 
-        // Generate admin JWT token
+        // Generate admin JWT session token
         const adminUser = {
             id: 'admin-root',
             name: 'System Administrator',
@@ -94,7 +106,7 @@ export async function POST(request) {
             message: 'Administrative authorization confirmed.',
         })
 
-        // Set secure session cookie
+        // Set secure session cookie for middleware
         response.cookies.set('token', token, {
             path: '/',
             maxAge: 86400 * 30,
