@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'react-hot-toast'
@@ -18,6 +18,9 @@ import {
     UserCheck,
     CheckCircle2,
     Shield,
+    Wifi,
+    WifiOff,
+    AlertCircle,
 } from 'lucide-react'
 import { useDispatch } from 'react-redux'
 import { setAuth } from '@/lib/features/auth/authSlice'
@@ -71,6 +74,42 @@ export default function AdminLoginPage() {
     // Shared loading state
     const [loading, setLoading] = useState(false)
 
+    // Live Backend Status: 'checking' | 'online' | 'waking'
+    const [backendStatus, setBackendStatus] = useState('checking')
+
+    // Check backend health on mount
+    useEffect(() => {
+        let isMounted = true
+
+        const pingBackend = async () => {
+            try {
+                const controller = new AbortController()
+                const timeoutId = setTimeout(() => controller.abort(), 7000)
+
+                const res = await fetch(GRAPHQL_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: '{ __typename }' }),
+                    signal: controller.signal,
+                })
+                clearTimeout(timeoutId)
+
+                if (isMounted) {
+                    setBackendStatus(res.ok ? 'online' : 'waking')
+                }
+            } catch {
+                if (isMounted) {
+                    setBackendStatus('waking')
+                }
+            }
+        }
+
+        pingBackend()
+        return () => {
+            isMounted = false
+        }
+    }, [])
+
     // Quick fill helper for testing/development
     const handleQuickFillEmail = () => {
         setEmail('admin@gocart.local')
@@ -94,7 +133,10 @@ export default function AdminLoginPage() {
 
         setLoading(true)
         try {
-            // Attempt GraphQL login mutation
+            // Attempt GraphQL login mutation with 25s timeout for Render cold starts
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), 25000)
+
             const response = await fetch(GRAPHQL_ENDPOINT, {
                 method: 'POST',
                 headers: {
@@ -110,7 +152,17 @@ export default function AdminLoginPage() {
                         },
                     },
                 }),
+                signal: controller.signal,
+            }).catch((err) => {
+                clearTimeout(timeoutId)
+                if (err.name === 'AbortError' || err.message === 'Failed to fetch' || err.name === 'TypeError') {
+                    throw new Error(
+                        'Backend server on Render is waking up (cold start). Please wait ~30 seconds and try again, or switch to Master Security Key.'
+                    )
+                }
+                throw err
             })
+            clearTimeout(timeoutId)
 
             const result = await response.json().catch(() => null)
 
@@ -209,7 +261,10 @@ export default function AdminLoginPage() {
             }, 500)
         } catch (err) {
             console.error('Admin Email Login Error:', err)
-            toast.error(err.message || 'Failed to authenticate with email')
+            const message = (err.name === 'TypeError' || err.message === 'Failed to fetch')
+                ? 'Backend on Render is waking up (cold start). Please wait ~30 seconds and try again.'
+                : err.message
+            toast.error(message || 'Failed to authenticate with email')
         } finally {
             setLoading(false)
         }
@@ -225,38 +280,68 @@ export default function AdminLoginPage() {
             return
         }
 
+        const isConfiguredKey = trimmedKey === DEFAULT_ADMIN_KEY
+
         setLoading(true)
         try {
-            // Verify key by querying backend
-            const testQuery = JSON.stringify({
-                query: `
-                    query VerifyAdminKey {
-                        merchants(limit: 1) {
-                            total
+            // Attempt to verify key against backend with 12s timeout
+            let verifiedWithBackend = false
+            try {
+                const controller = new AbortController()
+                const timeoutId = setTimeout(() => controller.abort(), 12000)
+
+                const testQuery = JSON.stringify({
+                    query: `
+                        query VerifyAdminKey {
+                            merchants(limit: 1) {
+                                total
+                            }
                         }
-                    }
-                `,
-            })
+                    `,
+                })
 
-            const response = await fetch(GRAPHQL_ENDPOINT, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Admin-Key': trimmedKey,
-                },
-                body: testQuery,
-            })
+                const response = await fetch(GRAPHQL_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-Key': trimmedKey,
+                    },
+                    body: testQuery,
+                    signal: controller.signal,
+                })
+                clearTimeout(timeoutId)
 
-            const result = await response.json().catch(() => null)
+                const result = await response.json().catch(() => null)
 
-            // If unauthorized, backend returns errors containing unauthorized
-            if (
-                result?.errors &&
-                result.errors.some((err) =>
-                    /unauthorized|invalid|forbidden/i.test(err.message)
-                )
-            ) {
-                throw new Error('Invalid Admin Key. Access denied by backend server.')
+                // If unauthorized, backend returns errors containing unauthorized
+                if (
+                    result?.errors &&
+                    result.errors.some((err) =>
+                        /unauthorized|invalid|forbidden/i.test(err.message)
+                    )
+                ) {
+                    throw new Error('Invalid Admin Key. Access denied by backend server.')
+                }
+
+                verifiedWithBackend = true
+                setBackendStatus('online')
+            } catch (netErr) {
+                // If explicitly rejected by backend, rethrow the error
+                if (netErr.message && /invalid admin key/i.test(netErr.message)) {
+                    throw netErr
+                }
+
+                // If network timeout or cold start on Render:
+                if (isConfiguredKey) {
+                    console.warn('Backend cold start / slow response. Proceeding with configured key:', netErr)
+                    toast('Backend server is waking up on Render. Logged in with configured Master Key.', {
+                        icon: '⚡',
+                    })
+                } else {
+                    throw new Error(
+                        'Backend server on Render is waking up (cold start takes ~30-60s). Please wait a moment and try again.'
+                    )
+                }
             }
 
             // Save Admin Key to localStorage & cookie
@@ -291,13 +376,18 @@ export default function AdminLoginPage() {
             // Dispatch Redux Auth
             dispatch(setAuth({ user: adminUser, token }))
 
-            toast.success('Admin authorization confirmed! Welcome to Admin Console.')
+            if (verifiedWithBackend) {
+                toast.success('Admin authorization confirmed! Welcome to Admin Console.')
+            }
             setTimeout(() => {
                 router.push('/')
             }, 500)
         } catch (err) {
             console.error('Admin Key Login Error:', err)
-            toast.error(err.message || 'Failed to authenticate with Admin Key')
+            const message = (err.name === 'TypeError' || err.message === 'Failed to fetch')
+                ? 'Backend on Render is waking up (cold start). Please wait ~30 seconds and try again.'
+                : err.message
+            toast.error(message || 'Failed to authenticate with Admin Key')
         } finally {
             setLoading(false)
         }
@@ -329,8 +419,24 @@ export default function AdminLoginPage() {
 
                     <div className="space-y-1">
                         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-[11px] font-semibold text-indigo-700 uppercase tracking-wider">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-0.5" />
-                            Admin Console Portal
+                            {backendStatus === 'online' && (
+                                <>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-0.5" />
+                                    Backend Online
+                                </>
+                            )}
+                            {backendStatus === 'waking' && (
+                                <>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping mr-0.5" />
+                                    Render Server Waking Up
+                                </>
+                            )}
+                            {backendStatus === 'checking' && (
+                                <>
+                                    <RefreshCw size={10} className="animate-spin text-indigo-500 mr-0.5" />
+                                    Checking Connection...
+                                </>
+                            )}
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
                             GoCart Control Center
@@ -570,8 +676,24 @@ export default function AdminLoginPage() {
                         <ArrowLeft size={14} /> Back to Storefront
                     </a>
                     <div className="flex items-center gap-2">
-                        <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
-                        <span className="text-slate-400 font-mono text-[11px]">GoCart Admin v0.1</span>
+                        {backendStatus === 'online' && (
+                            <>
+                                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                                <span className="text-slate-500 font-mono text-[11px]">Backend Online</span>
+                            </>
+                        )}
+                        {backendStatus === 'waking' && (
+                            <>
+                                <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                                <span className="text-amber-600 font-mono text-[11px]">Backend Waking Up</span>
+                            </>
+                        )}
+                        {backendStatus === 'checking' && (
+                            <>
+                                <span className="inline-block w-2 h-2 rounded-full bg-slate-400 animate-pulse" />
+                                <span className="text-slate-400 font-mono text-[11px]">Connecting...</span>
+                            </>
+                        )}
                     </div>
                 </div>
             </div>
