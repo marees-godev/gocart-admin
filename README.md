@@ -52,6 +52,11 @@ GoCart Admin empowers platform administrators to manage merchant stores, moderat
 ```text
 gocart-admin/
 ├── app/
+│   ├── api/
+│   │   └── admin/
+│   │       └── stores/
+│   │           ├── pending/ # GET pending store applications API
+│   │           └── action/  # POST approve/reject store action API
 │   ├── approve/             # Store review and approval workflows
 │   ├── categories/          # Marketplace category management
 │   ├── coupons/             # Discount codes and promotions
