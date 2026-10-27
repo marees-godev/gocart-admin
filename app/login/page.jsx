@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'react-hot-toast'
@@ -66,42 +66,6 @@ export default function AdminLoginPage() {
 
     // Shared loading state
     const [loading, setLoading] = useState(false)
-
-    // Live Backend Status: 'checking' | 'online' | 'waking'
-    const [backendStatus, setBackendStatus] = useState('checking')
-
-    // Check backend health on mount
-    useEffect(() => {
-        let isMounted = true
-
-        const pingBackend = async () => {
-            try {
-                const controller = new AbortController()
-                const timeoutId = setTimeout(() => controller.abort(), 7000)
-
-                const res = await fetch(GRAPHQL_ENDPOINT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: '{ __typename }' }),
-                    signal: controller.signal,
-                })
-                clearTimeout(timeoutId)
-
-                if (isMounted) {
-                    setBackendStatus(res.ok ? 'online' : 'waking')
-                }
-            } catch {
-                if (isMounted) {
-                    setBackendStatus('waking')
-                }
-            }
-        }
-
-        pingBackend()
-        return () => {
-            isMounted = false
-        }
-    }, [])
 
     // Quick fill helper for testing/development
     const handleQuickFillEmail = () => {
@@ -327,24 +291,8 @@ export default function AdminLoginPage() {
 
                     <div className="space-y-1">
                         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-[11px] font-semibold text-indigo-700 uppercase tracking-wider">
-                            {backendStatus === 'online' && (
-                                <>
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-0.5" />
-                                    Backend Online
-                                </>
-                            )}
-                            {backendStatus === 'waking' && (
-                                <>
-                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping mr-0.5" />
-                                    Render Server Waking Up
-                                </>
-                            )}
-                            {backendStatus === 'checking' && (
-                                <>
-                                    <RefreshCw size={10} className="animate-spin text-indigo-500 mr-0.5" />
-                                    Checking Connection...
-                                </>
-                            )}
+                            <Shield size={12} className="text-indigo-600" />
+                            Admin Console Portal
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
                             GoCart Control Center
@@ -360,11 +308,10 @@ export default function AdminLoginPage() {
                     <button
                         type="button"
                         onClick={() => setAuthMode('email')}
-                        className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                            authMode === 'email'
+                        className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-semibold transition-all cursor-pointer ${authMode === 'email'
                                 ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
                                 : 'text-slate-500 hover:text-slate-900 hover:bg-white/50'
-                        }`}
+                            }`}
                     >
                         <Mail size={15} />
                         <span>Admin Email</span>
@@ -373,11 +320,10 @@ export default function AdminLoginPage() {
                     <button
                         type="button"
                         onClick={() => setAuthMode('key')}
-                        className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                            authMode === 'key'
+                        className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-semibold transition-all cursor-pointer ${authMode === 'key'
                                 ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
                                 : 'text-slate-500 hover:text-slate-900 hover:bg-white/50'
-                        }`}
+                            }`}
                     >
                         <Key size={15} />
                         <span>Master Key</span>
@@ -568,38 +514,6 @@ export default function AdminLoginPage() {
                         </div>
                     </form>
                 )}
-
-                {/* Footer links */}
-                <div className="mt-7 pt-5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                    <a
-                        href="http://localhost:3000"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 text-slate-600 hover:text-indigo-600 transition font-medium"
-                    >
-                        <ArrowLeft size={14} /> Back to Storefront
-                    </a>
-                    <div className="flex items-center gap-2">
-                        {backendStatus === 'online' && (
-                            <>
-                                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
-                                <span className="text-slate-500 font-mono text-[11px]">Backend Online</span>
-                            </>
-                        )}
-                        {backendStatus === 'waking' && (
-                            <>
-                                <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                                <span className="text-amber-600 font-mono text-[11px]">Backend Waking Up</span>
-                            </>
-                        )}
-                        {backendStatus === 'checking' && (
-                            <>
-                                <span className="inline-block w-2 h-2 rounded-full bg-slate-400 animate-pulse" />
-                                <span className="text-slate-400 font-mono text-[11px]">Connecting...</span>
-                            </>
-                        )}
-                    </div>
-                </div>
             </div>
         </div>
     )
