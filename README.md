@@ -100,8 +100,8 @@ NEXT_PUBLIC_CURRENCY_SYMBOL='$'
 # Backend GraphQL Gateway Endpoint
 NEXT_PUBLIC_API_BASE_URL=https://gocart-backend-dtoi.onrender.com
 
-# Platform Master Security Key (X-Admin-Key)
-NEXT_PUBLIC_ADMIN_KEY=7f3a9c2e8d1b6f405a7e3c9d2b8f1a604e6d9c3b7a2f5e801d4c6b9a3f7e2d51
+# Server-only Admin Master Key (Never prefix with NEXT_PUBLIC_)
+ADMIN_KEY=your_secret_master_admin_key_here
 ```
 
 ---

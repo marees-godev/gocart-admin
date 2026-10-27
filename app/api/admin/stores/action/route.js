@@ -1,10 +1,7 @@
 import { NextResponse } from 'next/server'
 import { GRAPHQL_ENDPOINT } from '@/lib/apiClient'
 
-const ADMIN_KEY =
-    process.env.ADMIN_KEY ||
-    process.env.NEXT_PUBLIC_ADMIN_KEY ||
-    '7f3a9c2e8d1b6f405a7e3c9d2b8f1a604e6d9c3b7a2f5e801d4c6b9a3f7e2d51'
+const ADMIN_KEY = process.env.ADMIN_KEY
 
 const APPROVE_STORE_MUTATION = `
   mutation ApproveStore($id: ID!) {

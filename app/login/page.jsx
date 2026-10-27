@@ -18,17 +18,10 @@ import {
     UserCheck,
     CheckCircle2,
     Shield,
-    Wifi,
-    WifiOff,
-    AlertCircle,
 } from 'lucide-react'
 import { useDispatch } from 'react-redux'
 import { setAuth } from '@/lib/features/auth/authSlice'
 import { GRAPHQL_ENDPOINT } from '@/lib/apiClient'
-
-const DEFAULT_ADMIN_KEY =
-    process.env.NEXT_PUBLIC_ADMIN_KEY ||
-    '7f3a9c2e8d1b6f405a7e3c9d2b8f1a604e6d9c3b7a2f5e801d4c6b9a3f7e2d51'
 
 const LOGIN_MUTATION = `
   mutation AdminLogin($input: LoginInput!) {
@@ -67,8 +60,8 @@ export default function AdminLoginPage() {
     const [showPassword, setShowPassword] = useState(false)
     const [rememberMe, setRememberMe] = useState(true)
 
-    // Master Key login form state
-    const [adminKey, setAdminKey] = useState(DEFAULT_ADMIN_KEY)
+    // Master Key login form state (Starts empty, never exposes secret key in browser)
+    const [adminKey, setAdminKey] = useState('')
     const [showKey, setShowKey] = useState(false)
 
     // Shared loading state
@@ -133,7 +126,7 @@ export default function AdminLoginPage() {
 
         setLoading(true)
         try {
-            // Attempt GraphQL login mutation with 25s timeout for Render cold starts
+            // Attempt GraphQL login mutation with timeout
             const controller = new AbortController()
             const timeoutId = setTimeout(() => controller.abort(), 25000)
 
@@ -157,7 +150,7 @@ export default function AdminLoginPage() {
                 clearTimeout(timeoutId)
                 if (err.name === 'AbortError' || err.message === 'Failed to fetch' || err.name === 'TypeError') {
                     throw new Error(
-                        'Backend server on Render is waking up (cold start). Please wait ~30 seconds and try again, or switch to Master Security Key.'
+                        'Backend server on Render is waking up (cold start). Please wait ~30 seconds and try again.'
                     )
                 }
                 throw err
@@ -194,7 +187,7 @@ export default function AdminLoginPage() {
                     userId = decoded.sub || decoded.id || decoded.userId
                 }
             } catch {
-                // Ignore base64 decoding error
+                // Ignore decoding error
             }
 
             // Fetch user profile from /me
@@ -246,12 +239,6 @@ export default function AdminLoginPage() {
             }
             localStorage.setItem('user', JSON.stringify(adminUser))
 
-            // Attach master security key to ensure operations requiring X-Admin-Key succeed
-            if (DEFAULT_ADMIN_KEY) {
-                localStorage.setItem('adminKey', DEFAULT_ADMIN_KEY)
-                document.cookie = `adminKey=${encodeURIComponent(DEFAULT_ADMIN_KEY)}; path=/; max-age=${maxAge}; SameSite=Lax`
-            }
-
             // Update Redux state
             dispatch(setAuth({ user: adminUser, token: authPayload.token }))
 
@@ -270,124 +257,45 @@ export default function AdminLoginPage() {
         }
     }
 
-    // 2. Master Security Key Authentication Handler
+    // 2. Master Security Key Authentication Handler (Server-Verified)
     const handleKeyLogin = async (e) => {
         if (e) e.preventDefault()
 
         const trimmedKey = adminKey.trim()
         if (!trimmedKey) {
-            toast.error('Please enter the X-Admin-Key')
+            toast.error('Please enter the Master Security Key')
             return
         }
 
-        const isConfiguredKey = trimmedKey === DEFAULT_ADMIN_KEY
-
         setLoading(true)
         try {
-            // Attempt to verify key against backend with 12s timeout
-            let verifiedWithBackend = false
-            try {
-                const controller = new AbortController()
-                const timeoutId = setTimeout(() => controller.abort(), 12000)
+            // Verify key via secure server-side API endpoint
+            const res = await fetch('/api/admin/auth/key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: trimmedKey }),
+            })
 
-                const testQuery = JSON.stringify({
-                    query: `
-                        query VerifyAdminKey {
-                            merchants(limit: 1) {
-                                total
-                            }
-                        }
-                    `,
-                })
-
-                const response = await fetch(GRAPHQL_ENDPOINT, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Admin-Key': trimmedKey,
-                    },
-                    body: testQuery,
-                    signal: controller.signal,
-                })
-                clearTimeout(timeoutId)
-
-                const result = await response.json().catch(() => null)
-
-                // If unauthorized, backend returns errors containing unauthorized
-                if (
-                    result?.errors &&
-                    result.errors.some((err) =>
-                        /unauthorized|invalid|forbidden/i.test(err.message)
-                    )
-                ) {
-                    throw new Error('Invalid Admin Key. Access denied by backend server.')
-                }
-
-                verifiedWithBackend = true
-                setBackendStatus('online')
-            } catch (netErr) {
-                // If explicitly rejected by backend, rethrow the error
-                if (netErr.message && /invalid admin key/i.test(netErr.message)) {
-                    throw netErr
-                }
-
-                // If network timeout or cold start on Render:
-                if (isConfiguredKey) {
-                    console.warn('Backend cold start / slow response. Proceeding with configured key:', netErr)
-                    toast('Backend server is waking up on Render. Logged in with configured Master Key.', {
-                        icon: '⚡',
-                    })
-                } else {
-                    throw new Error(
-                        'Backend server on Render is waking up (cold start takes ~30-60s). Please wait a moment and try again.'
-                    )
-                }
+            const data = await res.json()
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || 'Invalid Master Security Key. Access denied.')
             }
 
-            // Save Admin Key to localStorage & cookie
-            localStorage.setItem('adminKey', trimmedKey)
-            document.cookie = `adminKey=${encodeURIComponent(trimmedKey)}; path=/; max-age=2592000; SameSite=Lax`
-
-            // Generate signed-payload JWT token for client middleware
-            const adminUser = {
-                id: 'admin-root',
-                name: 'System Administrator',
-                email: 'admin@gocart.local',
-                role: 'ADMIN',
-            }
-
-            const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-            const payload = btoa(
-                JSON.stringify({
-                    sub: 'admin-root',
-                    name: adminUser.name,
-                    email: adminUser.email,
-                    role: 'ADMIN',
-                    adminKey: trimmedKey,
-                    exp: Math.floor(Date.now() / 1000) + 86400 * 30, // 30 days
-                })
-            )
-            const token = `${header}.${payload}.mock_admin_sig`
-
-            localStorage.setItem('token', token)
-            localStorage.setItem('user', JSON.stringify(adminUser))
-            document.cookie = `token=${encodeURIComponent(token)}; path=/; max-age=2592000; SameSite=Lax`
+            // Save authenticated session token
+            localStorage.setItem('token', data.token)
+            localStorage.setItem('user', JSON.stringify(data.user))
+            document.cookie = `token=${encodeURIComponent(data.token)}; path=/; max-age=2592000; SameSite=Lax`
 
             // Dispatch Redux Auth
-            dispatch(setAuth({ user: adminUser, token }))
+            dispatch(setAuth({ user: data.user, token: data.token }))
 
-            if (verifiedWithBackend) {
-                toast.success('Admin authorization confirmed! Welcome to Admin Console.')
-            }
+            toast.success('Admin authorization confirmed! Welcome to Admin Console.')
             setTimeout(() => {
                 router.push('/')
-            }, 500)
+            }, 400)
         } catch (err) {
             console.error('Admin Key Login Error:', err)
-            const message = (err.name === 'TypeError' || err.message === 'Failed to fetch')
-                ? 'Backend on Render is waking up (cold start). Please wait ~30 seconds and try again.'
-                : err.message
-            toast.error(message || 'Failed to authenticate with Admin Key')
+            toast.error(err.message || 'Failed to authenticate with Master Security Key')
         } finally {
             setLoading(false)
         }
@@ -594,13 +502,9 @@ export default function AdminLoginPage() {
                                     <Key size={14} className="text-indigo-600" />
                                     Master Security Key
                                 </label>
-                                <button
-                                    type="button"
-                                    onClick={() => setAdminKey(DEFAULT_ADMIN_KEY)}
-                                    className="text-xs text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 px-2 py-0.5 rounded-md font-semibold inline-flex items-center gap-1 transition cursor-pointer"
-                                >
-                                    <Sparkles size={12} /> Use Configured Key
-                                </button>
+                                <span className="text-[11px] font-mono text-slate-400">
+                                    Restricted Root Key
+                                </span>
                             </div>
 
                             <div className="relative">
@@ -609,7 +513,7 @@ export default function AdminLoginPage() {
                                     required
                                     value={adminKey}
                                     onChange={(e) => setAdminKey(e.target.value)}
-                                    placeholder="Paste X-Admin-Key here..."
+                                    placeholder="Enter your master security key..."
                                     className="w-full pl-3.5 pr-11 py-3 bg-white border border-slate-200 rounded-xl focus:border-indigo-600 focus:ring-4 focus:ring-indigo-100 outline-none transition font-mono text-xs text-slate-800 placeholder:text-slate-400 shadow-xs"
                                 />
                                 <button
@@ -624,7 +528,7 @@ export default function AdminLoginPage() {
                             <div className="mt-3 bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-xs text-slate-600 flex items-start gap-2.5">
                                 <Shield size={16} className="text-indigo-600 shrink-0 mt-0.5" />
                                 <span className="leading-relaxed">
-                                    Grants root administrative privileges: merchant approvals, category curation, order moderation, and system governance.
+                                    Master security key is verified securely on the server. Grants root administrative access for merchant approvals, category curation, and order moderation.
                                 </span>
                             </div>
                         </div>
@@ -632,13 +536,13 @@ export default function AdminLoginPage() {
                         {/* Submit Button */}
                         <button
                             type="submit"
-                            disabled={loading}
+                            disabled={loading || !adminKey.trim()}
                             className="w-full py-3.5 px-4 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white font-semibold rounded-xl transition shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2 text-sm disabled:opacity-50 cursor-pointer mt-2"
                         >
                             {loading ? (
                                 <>
                                     <RefreshCw className="animate-spin" size={16} />
-                                    Authenticating Key...
+                                    Verifying Security Key...
                                 </>
                             ) : (
                                 <>
