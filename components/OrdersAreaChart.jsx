@@ -4,18 +4,30 @@ import { orderDummyData } from '@/assets/assets'
 
 export default function OrdersAreaChart({ allOrders = orderDummyData }) {
 
-    // Group orders by date
-    const ordersPerDay = (allOrders || []).reduce((acc, order) => {
-        const date = new Date(order.createdAt).toISOString().split('T')[0] // format: YYYY-MM-DD
-        acc[date] = (acc[date] || 0) + 1
+    // Group orders by date safely
+    const safeOrders = (Array.isArray(allOrders) && allOrders.length > 0) ? allOrders : orderDummyData
+
+    const ordersPerDay = safeOrders.reduce((acc, order) => {
+        if (!order || !order.createdAt) return acc
+        try {
+            const dateObj = new Date(order.createdAt)
+            if (!isNaN(dateObj.getTime())) {
+                const date = dateObj.toISOString().split('T')[0] // format: YYYY-MM-DD
+                acc[date] = (acc[date] || 0) + 1
+            }
+        } catch {
+            // Ignore invalid date format
+        }
         return acc
     }, {})
 
-    // Convert to array for Recharts
-    const chartData = Object.entries(ordersPerDay).map(([date, count]) => ({
-        date,
-        orders: count
-    }))
+    // Convert to sorted array for Recharts
+    const chartData = Object.entries(ordersPerDay)
+        .sort(([dateA], [dateB]) => dateA.localeCompare(dateB))
+        .map(([date, count]) => ({
+            date,
+            orders: count
+        }))
 
     return (
         <div className="w-full max-w-4xl h-[300px] text-xs">
