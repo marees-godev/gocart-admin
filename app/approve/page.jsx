@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo } from 'react'
+import Link from 'next/link'
 import toast from 'react-hot-toast'
 import {
     ShieldCheck,
@@ -9,6 +10,7 @@ import {
     XCircle,
     Search,
     AlertCircle,
+    AlertTriangle,
     Store,
     Filter,
     X,
@@ -33,7 +35,7 @@ export default function AdminApprove() {
     const [loading, setLoading] = useState(true)
     const [actionLoading, setActionLoading] = useState(null)
     const [searchQuery, setSearchQuery] = useState('')
-    const [statusFilter, setStatusFilter] = useState('ALL_PENDING') // 'ALL_PENDING' | 'PENDING_APPROVAL' | 'DRAFT' | 'ALL'
+    const [statusFilter, setStatusFilter] = useState('ALL_PENDING') // 'ALL_PENDING' | 'PENDING_APPROVAL' | 'DRAFT' | 'APPROVED' | 'ALL'
 
     // Rejection Modal state
     const [rejectModalOpen, setRejectModalOpen] = useState(false)
@@ -92,11 +94,87 @@ export default function AdminApprove() {
             }
 
             toast.success(`Store "${store.name}" approved successfully!`)
-            // Remove from pending list or update status
-            setStores((prev) => prev.filter((s) => s.id !== store.id))
+            // Update store status in state
+            setStores((prev) =>
+                prev.map((s) => (s.id === store.id ? { ...s, approvalStatus: 'APPROVED' } : s))
+            )
         } catch (err) {
             console.error('Approve Store Error:', err)
             toast.error(err.message || 'Failed to approve store')
+        } finally {
+            setActionLoading(null)
+        }
+    }
+
+    // Suspend Store handler
+    const handleSuspend = async (store) => {
+        if (!store?.id) return
+
+        const reason = window.prompt(
+            `Suspend "${store.name}"? Enter suspension reason (optional):`,
+            'Administrative review'
+        )
+        if (reason === null) return
+
+        setActionLoading(store.id)
+        try {
+            const res = await fetch('/api/admin/stores/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    storeId: store.id,
+                    action: 'suspend',
+                    reason: reason.trim() || 'Suspended by administrator',
+                }),
+            })
+
+            const data = await res.json()
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || 'Failed to suspend store')
+            }
+
+            toast.success(`Store "${store.name}" suspended.`)
+            setStores((prev) =>
+                prev.map((s) => (s.id === store.id ? { ...s, approvalStatus: 'SUSPENDED' } : s))
+            )
+        } catch (err) {
+            console.error('Suspend Store Error:', err)
+            toast.error(err.message || 'Failed to suspend store')
+        } finally {
+            setActionLoading(null)
+        }
+    }
+
+    // Unsuspend / Reactivate Store handler
+    const handleUnsuspend = async (store) => {
+        if (!store?.id) return
+
+        const confirmed = window.confirm(`Reactivate and unsuspend store "${store.name}"?`)
+        if (!confirmed) return
+
+        setActionLoading(store.id)
+        try {
+            const res = await fetch('/api/admin/stores/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    storeId: store.id,
+                    action: 'unsuspend',
+                }),
+            })
+
+            const data = await res.json()
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || 'Failed to reactivate store')
+            }
+
+            toast.success(`Store "${store.name}" reactivated!`)
+            setStores((prev) =>
+                prev.map((s) => (s.id === store.id ? { ...s, approvalStatus: 'APPROVED' } : s))
+            )
+        } catch (err) {
+            console.error('Unsuspend Store Error:', err)
+            toast.error(err.message || 'Failed to reactivate store')
         } finally {
             setActionLoading(null)
         }
@@ -135,7 +213,13 @@ export default function AdminApprove() {
             }
 
             toast.success(`Store "${selectedStore.name}" application rejected.`)
-            setStores((prev) => prev.filter((s) => s.id !== selectedStore.id))
+            setStores((prev) =>
+                prev.map((s) =>
+                    s.id === selectedStore.id
+                        ? { ...s, approvalStatus: 'REJECTED', rejectionReason: rejectReason.trim() }
+                        : s
+                )
+            )
             setRejectModalOpen(false)
             setSelectedStore(null)
             setRejectReason('')
@@ -150,7 +234,7 @@ export default function AdminApprove() {
     // Filtered store applications
     const filteredStores = useMemo(() => {
         return stores.filter((store) => {
-            const st = (store.approvalStatus || '').toUpperCase()
+            const st = (store.approvalStatus || store.status || '').toUpperCase()
 
             // Status filter logic
             let matchesStatus = true
@@ -160,6 +244,8 @@ export default function AdminApprove() {
                 matchesStatus = st === 'PENDING_APPROVAL' || st === 'PENDING'
             } else if (statusFilter === 'DRAFT') {
                 matchesStatus = st === 'DRAFT'
+            } else if (statusFilter === 'APPROVED') {
+                matchesStatus = st === 'APPROVED'
             } else if (statusFilter === 'ALL') {
                 matchesStatus = true
             }
@@ -181,11 +267,17 @@ export default function AdminApprove() {
 
     // Counters
     const pendingApprovalCount = stores.filter((s) => {
-        const st = (s.approvalStatus || '').toUpperCase()
+        const st = (s.approvalStatus || s.status || '').toUpperCase()
         return st === 'PENDING_APPROVAL' || st === 'PENDING'
     }).length
 
-    const draftCount = stores.filter((s) => (s.approvalStatus || '').toUpperCase() === 'DRAFT').length
+    const draftCount = stores.filter(
+        (s) => (s.approvalStatus || s.status || '').toUpperCase() === 'DRAFT'
+    ).length
+
+    const approvedCount = stores.filter(
+        (s) => (s.approvalStatus || s.status || '').toUpperCase() === 'APPROVED'
+    ).length
 
     if (loading && stores.length === 0) return <Loading />
 
@@ -291,14 +383,44 @@ export default function AdminApprove() {
 
                         <button
                             type="button"
+                            onClick={() => setStatusFilter('APPROVED')}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                                statusFilter === 'APPROVED'
+                                    ? 'bg-slate-900 text-white shadow-xs'
+                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200/80'
+                            }`}
+                        >
+                            <span>Approved</span>
+                            <span
+                                className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                                    statusFilter === 'APPROVED'
+                                        ? 'bg-indigo-500 text-white'
+                                        : 'bg-slate-200 text-slate-700'
+                                }`}
+                            >
+                                {approvedCount}
+                            </span>
+                        </button>
+
+                        <button
+                            type="button"
                             onClick={() => setStatusFilter('ALL')}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
                                 statusFilter === 'ALL'
                                     ? 'bg-slate-900 text-white shadow-xs'
                                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200/80'
                             }`}
                         >
-                            All Database Stores ({stores.length})
+                            <span>All Stores</span>
+                            <span
+                                className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                                    statusFilter === 'ALL'
+                                        ? 'bg-indigo-500 text-white'
+                                        : 'bg-slate-200 text-slate-700'
+                                }`}
+                            >
+                                {stores.length}
+                            </span>
                         </button>
                     </div>
 
@@ -319,55 +441,134 @@ export default function AdminApprove() {
             {/* Applications List */}
             {filteredStores.length > 0 ? (
                 <div className="space-y-4">
-                    {filteredStores.map((store) => (
-                        <div
-                            key={store.id}
-                            className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 hover:border-slate-300 transition-all flex flex-col md:flex-row md:items-end justify-between gap-6"
-                        >
-                            {/* Store Information */}
-                            <div className="flex-1">
-                                <StoreInfo store={store} />
+                    {filteredStores.map((store) => {
+                        const st = (store.approvalStatus || store.status || '').toUpperCase()
 
-                                {store.merchantId && (
-                                    <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
-                                        <span className="font-mono bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-600">
-                                            Store UUID: {store.id}
-                                        </span>
-                                        <span className="font-mono bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-600">
-                                            Merchant UUID: {store.merchantId}
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
+                        return (
+                            <div
+                                key={store.id}
+                                className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 hover:border-slate-300 transition-all flex flex-col md:flex-row md:items-end justify-between gap-6"
+                            >
+                                {/* Store Information */}
+                                <div className="flex-1">
+                                    <StoreInfo store={store} />
 
-                            {/* Action Buttons */}
-                            <div className="flex items-center gap-2 pt-2 md:pt-0 shrink-0">
-                                <button
-                                    type="button"
-                                    disabled={actionLoading === store.id}
-                                    onClick={() => handleApprove(store)}
-                                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
-                                >
-                                    {actionLoading === store.id ? (
-                                        <RefreshCw size={14} className="animate-spin" />
-                                    ) : (
-                                        <CheckCircle2 size={15} />
+                                    {store.merchantId && (
+                                        <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+                                            <span className="font-mono bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-600">
+                                                Store UUID: {store.id}
+                                            </span>
+                                            <span className="font-mono bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-600">
+                                                Merchant UUID: {store.merchantId}
+                                            </span>
+                                        </div>
                                     )}
-                                    <span>Approve Store</span>
-                                </button>
+                                </div>
 
-                                <button
-                                    type="button"
-                                    disabled={actionLoading === store.id}
-                                    onClick={() => openRejectModal(store)}
-                                    className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 active:scale-[0.98] rounded-xl text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                                >
-                                    <XCircle size={15} />
-                                    <span>Reject</span>
-                                </button>
+                                {/* Action Buttons */}
+                                <div className="flex items-center flex-wrap gap-2 pt-2 md:pt-0 shrink-0">
+                                    {st === 'APPROVED' ? (
+                                        <>
+                                            <div className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-semibold">
+                                                <CheckCircle2 size={15} className="text-emerald-600" />
+                                                <span>Store Approved</span>
+                                            </div>
+
+                                            <Link
+                                                href="/stores"
+                                                className="px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 active:scale-[0.98] rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                                            >
+                                                <Store size={14} className="text-slate-500" />
+                                                <span>Live Stores</span>
+                                            </Link>
+
+                                            <button
+                                                type="button"
+                                                disabled={actionLoading === store.id}
+                                                onClick={() => handleSuspend(store)}
+                                                className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 active:scale-[0.98] rounded-xl text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                                            >
+                                                {actionLoading === store.id ? (
+                                                    <RefreshCw size={14} className="animate-spin" />
+                                                ) : (
+                                                    <AlertTriangle size={14} />
+                                                )}
+                                                <span>Suspend</span>
+                                            </button>
+                                        </>
+                                    ) : st === 'SUSPENDED' ? (
+                                        <>
+                                            <div className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-semibold">
+                                                <AlertTriangle size={15} className="text-amber-600" />
+                                                <span>Suspended</span>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                disabled={actionLoading === store.id}
+                                                onClick={() => handleUnsuspend(store)}
+                                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                                            >
+                                                {actionLoading === store.id ? (
+                                                    <RefreshCw size={14} className="animate-spin" />
+                                                ) : (
+                                                    <CheckCircle2 size={15} />
+                                                )}
+                                                <span>Reactivate Store</span>
+                                            </button>
+                                        </>
+                                    ) : st === 'REJECTED' ? (
+                                        <>
+                                            <div className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl text-xs font-semibold">
+                                                <XCircle size={15} className="text-rose-600" />
+                                                <span>Rejected</span>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                disabled={actionLoading === store.id}
+                                                onClick={() => handleApprove(store)}
+                                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                                            >
+                                                {actionLoading === store.id ? (
+                                                    <RefreshCw size={14} className="animate-spin" />
+                                                ) : (
+                                                    <CheckCircle2 size={15} />
+                                                )}
+                                                <span>Re-approve Store</span>
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <button
+                                                type="button"
+                                                disabled={actionLoading === store.id}
+                                                onClick={() => handleApprove(store)}
+                                                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                                            >
+                                                {actionLoading === store.id ? (
+                                                    <RefreshCw size={14} className="animate-spin" />
+                                                ) : (
+                                                    <CheckCircle2 size={15} />
+                                                )}
+                                                <span>Approve Store</span>
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                disabled={actionLoading === store.id}
+                                                onClick={() => openRejectModal(store)}
+                                                className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 active:scale-[0.98] rounded-xl text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                                            >
+                                                <XCircle size={15} />
+                                                <span>Reject</span>
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        )
+                    })}
                 </div>
             ) : (
                 <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center shadow-xs">

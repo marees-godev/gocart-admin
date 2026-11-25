@@ -9,7 +9,11 @@ import {
     LayoutListIcon,
     UsersIcon,
     LayersIcon,
-    SettingsIcon
+    SettingsIcon,
+    TruckIcon,
+    RotateCcwIcon,
+    FlagIcon,
+    ShoppingBagIcon
 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -23,8 +27,12 @@ const AdminSidebar = () => {
         { name: 'Live Stores', href: '/stores', icon: StoreIcon },
         { name: 'Approve Stores', href: '/approve', icon: ShieldCheckIcon },
         { name: 'Master Orders', href: '/orders', icon: LayoutListIcon },
-        { name: 'Users & Merchants', href: '/users', icon: UsersIcon },
+        { name: 'Returns & Refunds', href: '/returns', icon: RotateCcwIcon },
+        { name: 'Products', href: '/products', icon: ShoppingBagIcon },
         { name: 'Categories', href: '/categories', icon: LayersIcon },
+        { name: 'Users & Merchants', href: '/users', icon: UsersIcon },
+        { name: 'Delivery Partners', href: '/delivery-partners', icon: TruckIcon },
+        { name: 'Flagged Ratings', href: '/ratings', icon: FlagIcon },
         { name: 'Coupons', href: '/coupons', icon: TicketPercentIcon },
         { name: 'Platform Settings', href: '/settings', icon: SettingsIcon },
     ]

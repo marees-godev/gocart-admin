@@ -1,39 +1,168 @@
 'use client'
 
 import React, { useState } from 'react'
+import toast from 'react-hot-toast'
 import {
-    Package,
     Search,
-    Filter,
-    Calendar,
     Eye,
-    DollarSign,
-    CheckCircle2,
-    Clock,
-    Truck,
-    AlertCircle,
-    X
+    X,
+    RefreshCw
 } from 'lucide-react'
-import { orderDummyData } from '@/assets/assets'
+import { assets, orderDummyData } from '@/assets/assets'
+
+function normalizeOrder(o) {
+    let parsedAddr = null
+    if (typeof o.shippingAddress === 'string') {
+        try {
+            parsedAddr = JSON.parse(o.shippingAddress)
+        } catch {
+            parsedAddr = { street: o.shippingAddress }
+        }
+    }
+
+    return {
+        ...o,
+        total: o.total ?? o.totalAmount ?? 0,
+        status: o.orderStatus || o.status || 'ORDER_PLACED',
+        isPaid: o.isPaid ?? (o.paymentStatus === 'PAID' || o.paymentStatus === 'COMPLETED'),
+        paymentMethod: o.paymentMethod || o.paymentStatus || 'ONLINE',
+        user: o.user || { id: o.userId, name: o.userId ? `User ${String(o.userId).slice(0, 8)}` : 'Customer', email: '' },
+        address: o.address || parsedAddr || {},
+        orderItems: o.orderItems || (o.items || []).map((item) => ({
+            orderId: o.id,
+            productId: item.productId,
+            quantity: item.quantity,
+            price: item.unitPrice ?? item.totalPrice ?? 0,
+            product: { id: item.productId, name: item.productName || item.sku || 'Product', images: [] },
+        })),
+        isBackend: true,
+    }
+}
 
 export default function AdminMasterOrders() {
     const [orders, setOrders] = useState(orderDummyData || [])
     const [searchQuery, setSearchQuery] = useState('')
+    const [lookupType, setLookupType] = useState('userId') // 'userId' | 'orderId'
+    const [lookupValue, setLookupValue] = useState('')
+    const [loading, setLoading] = useState(false)
     const [selectedStatus, setSelectedStatus] = useState('ALL')
     const [activeModalOrder, setActiveModalOrder] = useState(null)
+    const [updatingStatus, setUpdatingStatus] = useState(false)
+    const [refundLoading, setRefundLoading] = useState(false)
+    const [refundReason, setRefundReason] = useState('')
+
+    const handleBackendLookup = async (e) => {
+        e.preventDefault()
+        if (!lookupValue.trim()) {
+            setOrders(orderDummyData || [])
+            return
+        }
+        setLoading(true)
+        try {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+            const param = lookupType === 'orderId'
+                ? `orderId=${encodeURIComponent(lookupValue.trim())}`
+                : `userId=${encodeURIComponent(lookupValue.trim())}`
+            const res = await fetch(`/api/admin/orders?${param}`, {
+                cache: 'no-store',
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok || !json?.success) {
+                throw new Error(json?.message || 'Failed to fetch orders')
+            }
+            const mapped = (json.orders || []).map(normalizeOrder)
+            setOrders(mapped)
+            toast.success(`Loaded ${mapped.length} order(s)`)
+        } catch (err) {
+            toast.error(err.message || 'Failed to lookup orders')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const handleStatusUpdate = async (orderId, newStatus) => {
+        if (updatingStatus) return
+        setUpdatingStatus(true)
+        try {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+            const res = await fetch('/api/admin/orders', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ id: orderId, status: newStatus }),
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok || !json?.success) {
+                throw new Error(json?.message || 'Failed to update order status')
+            }
+
+            setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)))
+            setActiveModalOrder((prev) => (prev && prev.id === orderId ? { ...prev, status: newStatus } : prev))
+            toast.success(`Order status updated to ${newStatus}`)
+        } catch (err) {
+            toast.error(err.message || 'Failed to update order status')
+        } finally {
+            setUpdatingStatus(false)
+        }
+    }
+
+    const handleIssueRefund = async (order) => {
+        if (refundLoading) return
+        setRefundLoading(true)
+        try {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+            const headers = {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            }
+
+            const payRes = await fetch(`/api/admin/refunds?orderId=${encodeURIComponent(order.id)}`, {
+                headers,
+                cache: 'no-store',
+            })
+            const payJson = await payRes.json().catch(() => null)
+            if (!payRes.ok || !payJson?.success || !payJson?.payment?.id) {
+                throw new Error(payJson?.message || 'No payment record found for this order')
+            }
+
+            const refundRes = await fetch('/api/admin/refunds', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    paymentId: payJson.payment.id,
+                    amount: Number(order.total || payJson.payment.amount || 0),
+                    reason: refundReason.trim() || 'Admin initiated refund',
+                    idempotencyKey: `refund-${order.id}-${Date.now()}`,
+                }),
+            })
+            const refundJson = await refundRes.json().catch(() => null)
+            if (!refundRes.ok || !refundJson?.success) {
+                throw new Error(refundJson?.message || 'Failed to create refund')
+            }
+
+            toast.success(`Refund initiated (${refundJson.refund?.status || 'SUCCESS'})`)
+            setRefundReason('')
+        } catch (err) {
+            toast.error(err.message || 'Refund failed')
+        } finally {
+            setRefundLoading(false)
+        }
+    }
 
     const filteredOrders = orders.filter((order) => {
         const matchesSearch =
-            order.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            order.user?.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            order.user?.email.toLowerCase().includes(searchQuery.toLowerCase())
+            (order.id || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (order.user?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (order.user?.email || '').toLowerCase().includes(searchQuery.toLowerCase())
         const matchesStatus = selectedStatus === 'ALL' || order.status === selectedStatus
         return matchesSearch && matchesStatus
     })
 
     return (
         <div className="text-slate-600 mb-28 max-w-6xl space-y-8">
-            
             {/* Page Header */}
             <div>
                 <h1 className="text-2xl text-slate-500">
@@ -44,12 +173,39 @@ export default function AdminMasterOrders() {
                 </p>
             </div>
 
+            {/* Backend Lookup Bar */}
+            <form onSubmit={handleBackendLookup} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                <select
+                    value={lookupType}
+                    onChange={(e) => setLookupType(e.target.value)}
+                    className="px-3 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 bg-slate-50 outline-none"
+                >
+                    <option value="userId">Lookup by User ID</option>
+                    <option value="orderId">Lookup by Order ID</option>
+                </select>
+                <input
+                    type="text"
+                    value={lookupValue}
+                    onChange={(e) => setLookupValue(e.target.value)}
+                    placeholder={lookupType === 'orderId' ? 'Enter Order UUID...' : 'Enter User UUID...'}
+                    className="flex-1 px-4 py-2 rounded-xl border border-slate-300 focus:border-slate-800 outline-none text-sm text-slate-800"
+                />
+                <button
+                    type="submit"
+                    disabled={loading}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-xl text-xs font-semibold transition"
+                >
+                    <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                    {loading ? 'Fetching...' : 'Fetch from Backend'}
+                </button>
+            </form>
+
             {/* Filters & Search */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="relative max-w-md w-full">
                     <input
                         type="text"
-                        placeholder="Search by order ID or customer name..."
+                        placeholder="Filter loaded orders by ID or customer..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 focus:border-slate-800 outline-none text-slate-800 text-sm bg-white shadow-xs"
@@ -175,19 +331,34 @@ export default function AdminMasterOrders() {
                             </button>
                         </div>
 
+                        {/* Status Update */}
+                        <div className="flex items-center justify-between bg-slate-50 p-3.5 rounded-2xl text-xs">
+                            <span className="font-bold text-slate-700">Order Status:</span>
+                            <select
+                                value={activeModalOrder.status}
+                                disabled={updatingStatus}
+                                onChange={(e) => handleStatusUpdate(activeModalOrder.id, e.target.value)}
+                                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800 outline-none"
+                            >
+                                {['CREATED', 'CONFIRMED', 'ORDER_PLACED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'].map((st) => (
+                                    <option key={st} value={st}>{st}</option>
+                                ))}
+                            </select>
+                        </div>
+
                         {/* Customer & Shipping Info */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl text-xs text-slate-600">
                             <div>
                                 <h4 className="font-bold text-slate-800 mb-1">Customer Details</h4>
                                 <p><span className="font-semibold">Name:</span> {activeModalOrder.user?.name}</p>
-                                <p><span className="font-semibold">Email:</span> {activeModalOrder.user?.email}</p>
-                                <p><span className="font-semibold">Phone:</span> {activeModalOrder.address?.phone || '+1 555-0192'}</p>
+                                <p><span className="font-semibold">Email:</span> {activeModalOrder.user?.email || '-'}</p>
+                                <p><span className="font-semibold">Phone:</span> {activeModalOrder.address?.phone || '-'}</p>
                             </div>
                             <div>
                                 <h4 className="font-bold text-slate-800 mb-1">Shipping Address</h4>
-                                <p>{activeModalOrder.address?.street || '742 Evergreen Terrace'}</p>
-                                <p>{activeModalOrder.address?.city || 'Springfield'}, {activeModalOrder.address?.state || 'OR'} {activeModalOrder.address?.zip || '97477'}</p>
-                                <p>{activeModalOrder.address?.country || 'United States'}</p>
+                                <p>{activeModalOrder.address?.street || '-'}</p>
+                                <p>{activeModalOrder.address?.city || ''} {activeModalOrder.address?.state || ''} {activeModalOrder.address?.zip || activeModalOrder.address?.postal_code || ''}</p>
+                                <p>{activeModalOrder.address?.country || ''}</p>
                             </div>
                         </div>
 
@@ -216,6 +387,25 @@ export default function AdminMasterOrders() {
                         <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
                             <span className="font-bold text-slate-700">Total Order Amount</span>
                             <span className="text-xl font-extrabold text-slate-900">${activeModalOrder.total}</span>
+                        </div>
+
+                        {/* Admin Refund Action */}
+                        <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+                            <input
+                                type="text"
+                                value={refundReason}
+                                onChange={(e) => setRefundReason(e.target.value)}
+                                placeholder="Refund reason (optional)..."
+                                className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs outline-none focus:border-slate-800"
+                            />
+                            <button
+                                type="button"
+                                disabled={refundLoading}
+                                onClick={() => handleIssueRefund(activeModalOrder)}
+                                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-semibold transition"
+                            >
+                                {refundLoading ? 'Processing Refund...' : 'Issue Full Refund'}
+                            </button>
                         </div>
                     </div>
                 </div>

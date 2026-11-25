@@ -1,57 +1,117 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import toast from 'react-hot-toast'
 import {
-    FolderTree,
     Plus,
     Trash2,
-    Edit2,
-    Package,
-    Search,
-    Check,
     X,
-    Layers
+    Layers,
+    RefreshCw
 } from 'lucide-react'
 import { categories as defaultCategories } from '@/assets/assets'
 
-export default function AdminCategories() {
-    const [categoriesList, setCategoriesList] = useState(
-        (defaultCategories || ['Headphones', 'Speakers', 'Watch', 'Earbuds', 'Mouse', 'Decoration']).map(
-            (cat, idx) => ({
-                id: idx + 1,
-                name: cat,
-                productsCount: Math.floor(Math.random() * 40) + 10,
-                isActive: true,
-                slug: cat.toLowerCase()
-            })
-        )
-    )
+function authHeaders() {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    return {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }
+}
 
+export default function AdminCategories() {
+    const [categoriesList, setCategoriesList] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [submitting, setSubmitting] = useState(false)
     const [isAddModalOpen, setIsAddModalOpen] = useState(false)
     const [newCategoryName, setNewCategoryName] = useState('')
+    const [newCategoryDescription, setNewCategoryDescription] = useState('')
 
-    const handleAddCategory = (e) => {
-        e.preventDefault()
-        if (!newCategoryName.trim()) return
-        const newCat = {
-            id: Date.now(),
-            name: newCategoryName.trim(),
-            productsCount: 0,
-            isActive: true,
-            slug: newCategoryName.trim().toLowerCase().replace(/\s+/g, '-')
+    const fetchCategories = async () => {
+        try {
+            const res = await fetch('/api/admin/categories?limit=100', {
+                headers: authHeaders(),
+                cache: 'no-store',
+            })
+            const json = await res.json().catch(() => null)
+            if (res.ok && json?.success && Array.isArray(json.categories)) {
+                setCategoriesList(json.categories)
+            } else {
+                throw new Error(json?.message || 'Failed to load categories')
+            }
+        } catch (err) {
+            console.warn('Failed to fetch categories from backend, using fallback:', err)
+            setCategoriesList(
+                (defaultCategories || ['Headphones', 'Speakers', 'Watch', 'Earbuds', 'Mouse', 'Decoration']).map(
+                    (cat, idx) => ({
+                        id: String(idx + 1),
+                        name: cat,
+                        description: '',
+                        isActive: true,
+                    })
+                )
+            )
+        } finally {
+            setLoading(false)
         }
-        setCategoriesList([newCat, ...categoriesList])
-        setNewCategoryName('')
-        setIsAddModalOpen(false)
     }
 
-    const handleDelete = (id) => {
-        setCategoriesList(categoriesList.filter((c) => c.id !== id))
+    useEffect(() => {
+        fetchCategories()
+    }, [])
+
+    const handleAddCategory = async (e) => {
+        e.preventDefault()
+        if (!newCategoryName.trim() || submitting) return
+        setSubmitting(true)
+
+        try {
+            const res = await fetch('/api/admin/categories', {
+                method: 'POST',
+                headers: authHeaders(),
+                body: JSON.stringify({
+                    name: newCategoryName.trim(),
+                    description: newCategoryDescription.trim() || undefined,
+                    isActive: true,
+                }),
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok || !json?.success || !json?.category) {
+                throw new Error(json?.message || 'Failed to create category')
+            }
+
+            setCategoriesList((prev) => [json.category, ...prev])
+            setNewCategoryName('')
+            setNewCategoryDescription('')
+            setIsAddModalOpen(false)
+            toast.success(`Category "${json.category.name}" created`)
+        } catch (err) {
+            toast.error(err.message || 'Failed to create category')
+        } finally {
+            setSubmitting(false)
+        }
+    }
+
+    const handleDelete = async (id, name) => {
+        try {
+            const res = await fetch(`/api/admin/categories?id=${encodeURIComponent(id)}`, {
+                method: 'DELETE',
+                headers: authHeaders(),
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok || !json?.success) {
+                throw new Error(json?.message || 'Failed to delete category')
+            }
+
+            setCategoriesList((prev) => prev.filter((c) => c.id !== id))
+            toast.success(`Category "${name}" deleted`)
+        } catch (err) {
+            toast.error(err.message || 'Failed to delete category')
+        }
     }
 
     return (
         <div className="text-slate-600 mb-28 max-w-5xl space-y-8">
-            
             {/* Page Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -63,13 +123,22 @@ export default function AdminCategories() {
                     </p>
                 </div>
 
-                <button
-                    type="button"
-                    onClick={() => setIsAddModalOpen(true)}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium shadow-sm transition"
-                >
-                    <Plus size={17} /> Add New Category
-                </button>
+                <div className="flex items-center gap-2.5">
+                    <button
+                        type="button"
+                        onClick={() => { setLoading(true); fetchCategories() }}
+                        className="p-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition flex items-center gap-2 text-xs font-semibold"
+                    >
+                        <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setIsAddModalOpen(true)}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium shadow-sm transition"
+                    >
+                        <Plus size={17} /> Add New Category
+                    </button>
+                </div>
             </div>
 
             {/* Category Cards Grid */}
@@ -79,20 +148,22 @@ export default function AdminCategories() {
                         key={cat.id}
                         className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex items-center justify-between hover:border-slate-300 transition"
                     >
-                        <div className="flex items-center gap-3.5">
-                            <div className="w-11 h-11 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
+                        <div className="flex items-center gap-3.5 min-w-0">
+                            <div className="w-11 h-11 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
                                 <Layers size={20} />
                             </div>
-                            <div>
-                                <h3 className="font-bold text-slate-800 text-sm">{cat.name}</h3>
-                                <p className="text-xs text-slate-400">{cat.productsCount} active products</p>
+                            <div className="min-w-0">
+                                <h3 className="font-bold text-slate-800 text-sm truncate">{cat.name}</h3>
+                                <p className="text-xs text-slate-400 truncate">
+                                    {cat.description || (cat.isActive ? 'Active category' : 'Inactive')}
+                                </p>
                             </div>
                         </div>
 
                         <button
                             type="button"
-                            onClick={() => handleDelete(cat.id)}
-                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                            onClick={() => handleDelete(cat.id, cat.name)}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition shrink-0"
                             title="Delete Category"
                         >
                             <Trash2 size={16} />
@@ -131,11 +202,25 @@ export default function AdminCategories() {
                                 />
                             </div>
 
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                                    Description (Optional)
+                                </label>
+                                <input
+                                    type="text"
+                                    placeholder="Short category description..."
+                                    value={newCategoryDescription}
+                                    onChange={(e) => setNewCategoryDescription(e.target.value)}
+                                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:border-slate-800 outline-none text-slate-800 text-sm"
+                                />
+                            </div>
+
                             <button
                                 type="submit"
-                                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm rounded-xl transition"
+                                disabled={submitting}
+                                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-medium text-sm rounded-xl transition"
                             >
-                                Save Category
+                                {submitting ? 'Saving...' : 'Save Category'}
                             </button>
                         </form>
                     </div>

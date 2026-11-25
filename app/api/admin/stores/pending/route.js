@@ -75,12 +75,12 @@ export async function GET(request) {
         let filteredStores = allStores
         if (statusFilter.toUpperCase() === 'PENDING') {
             filteredStores = allStores.filter((s) => {
-                const st = (s.approvalStatus || '').toUpperCase()
+                const st = (s.approvalStatus || s.status || '').toUpperCase()
                 return st === 'PENDING' || st === 'PENDING_APPROVAL' || st === 'DRAFT'
             })
         } else if (statusFilter.toUpperCase() !== 'ALL') {
             filteredStores = allStores.filter(
-                (s) => (s.approvalStatus || '').toUpperCase() === statusFilter.toUpperCase()
+                (s) => (s.approvalStatus || s.status || '').toUpperCase() === statusFilter.toUpperCase()
             )
         }
 

@@ -1,112 +1,193 @@
 'use client'
 
-import React, { useState } from 'react'
-import Image from 'next/image'
+import React, { useEffect, useState } from 'react'
+import toast from 'react-hot-toast'
 import {
     Users,
     Search,
     Shield,
     Store,
-    UserCheck,
-    UserX,
-    Filter,
-    Mail,
-    Calendar,
-    MoreVertical,
     CheckCircle2,
-    Ban
+    Ban,
+    RefreshCw
 } from 'lucide-react'
-import { assets } from '@/assets/assets'
+
+const fallbackUsers = [
+    {
+        id: 'usr_1',
+        name: 'Alex Morgan',
+        email: 'alex.morgan@example.com',
+        role: 'USER',
+        ordersCount: 12,
+        spent: '$1,240.50',
+        status: 'ACTIVE',
+        joinedAt: '2024-01-15'
+    },
+    {
+        id: 'usr_2',
+        name: 'Sarah Jenkins',
+        email: 'sarah.j@happyshop.com',
+        role: 'SELLER',
+        storeName: 'Happy Shop',
+        ordersCount: 142,
+        spent: '$18,920.00',
+        status: 'ACTIVE',
+        joinedAt: '2023-11-20'
+    },
+    {
+        id: 'usr_3',
+        name: 'David Miller',
+        email: 'david.m@example.com',
+        role: 'USER',
+        ordersCount: 3,
+        spent: '$210.00',
+        status: 'BANNED',
+        joinedAt: '2024-05-10'
+    },
+    {
+        id: 'usr_4',
+        name: 'GoCart Administrator',
+        email: 'admin@gocart.com',
+        role: 'ADMIN',
+        ordersCount: 0,
+        spent: '$0.00',
+        status: 'ACTIVE',
+        joinedAt: '2023-01-01'
+    }
+]
+
+function mapMerchantToRow(m) {
+    const fullName = [m.firstName, m.lastName].filter(Boolean).join(' ').trim()
+    const status = m.status === 'APPROVED' ? 'ACTIVE' : m.status === 'SUSPENDED' ? 'BANNED' : (m.status || 'PENDING')
+    return {
+        id: m.id,
+        name: fullName || m.businessName || 'Merchant',
+        email: m.businessEmail || '-',
+        role: 'SELLER',
+        storeName: m.businessName || '-',
+        ordersCount: 0,
+        spent: '-',
+        status,
+        rawStatus: m.status,
+        joinedAt: m.createdAt ? String(m.createdAt).slice(0, 10) : '-',
+        isBackend: true,
+    }
+}
 
 export default function AdminUsers() {
     const [searchQuery, setSearchQuery] = useState('')
-    const [selectedRole, setSelectedRole] = useState('ALL') // 'ALL' | 'USER' | 'SELLER' | 'ADMIN'
+    const [selectedRole, setSelectedRole] = useState('ALL')
+    const [usersList, setUsersList] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [updatingId, setUpdatingId] = useState(null)
 
-    // Mock Users Data
-    const [usersList, setUsersList] = useState([
-        {
-            id: 'usr_1',
-            name: 'Alex Morgan',
-            email: 'alex.morgan@example.com',
-            role: 'USER',
-            ordersCount: 12,
-            spent: '$1,240.50',
-            status: 'ACTIVE',
-            joinedAt: '2024-01-15'
-        },
-        {
-            id: 'usr_2',
-            name: 'Sarah Jenkins',
-            email: 'sarah.j@happyshop.com',
-            role: 'SELLER',
-            storeName: 'Happy Shop',
-            ordersCount: 142,
-            spent: '$18,920.00',
-            status: 'ACTIVE',
-            joinedAt: '2023-11-20'
-        },
-        {
-            id: 'usr_3',
-            name: 'David Miller',
-            email: 'david.m@example.com',
-            role: 'USER',
-            ordersCount: 3,
-            spent: '$210.00',
-            status: 'BANNED',
-            joinedAt: '2024-05-10'
-        },
-        {
-            id: 'usr_4',
-            name: 'GoCart Administrator',
-            email: 'admin@gocart.com',
-            role: 'ADMIN',
-            ordersCount: 0,
-            spent: '$0.00',
-            status: 'ACTIVE',
-            joinedAt: '2023-01-01'
-        },
-        {
-            id: 'usr_5',
-            name: 'Elena Rostova',
-            email: 'elena@novatech.io',
-            role: 'SELLER',
-            storeName: 'Nova Tech Store',
-            ordersCount: 88,
-            spent: '$12,450.00',
-            status: 'ACTIVE',
-            joinedAt: '2024-02-18'
+    const fetchMerchants = async () => {
+        try {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+            const res = await fetch('/api/admin/users?limit=50', {
+                cache: 'no-store',
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            })
+            const json = await res.json().catch(() => null)
+            if (res.ok && json?.success && Array.isArray(json.merchants)) {
+                const mapped = json.merchants.map(mapMerchantToRow)
+                setUsersList(mapped.length > 0 ? mapped : fallbackUsers)
+            } else {
+                throw new Error(json?.message || 'Failed to load merchants')
+            }
+        } catch (err) {
+            console.warn('Failed to fetch merchants from backend, using fallback:', err)
+            setUsersList(fallbackUsers)
+        } finally {
+            setLoading(false)
         }
-    ])
+    }
+
+    useEffect(() => {
+        fetchMerchants()
+    }, [])
 
     const filteredUsers = usersList.filter((user) => {
         const matchesSearch =
-            user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            user.email.toLowerCase().includes(searchQuery.toLowerCase())
+            (user.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (user.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (user.storeName || '').toLowerCase().includes(searchQuery.toLowerCase())
         const matchesRole = selectedRole === 'ALL' || user.role === selectedRole
         return matchesSearch && matchesRole
     })
 
-    const toggleUserStatus = (userId) => {
-        setUsersList((prev) =>
-            prev.map((u) =>
-                u.id === userId
-                    ? { ...u, status: u.status === 'ACTIVE' ? 'BANNED' : 'ACTIVE' }
-                    : u
+    const toggleUserStatus = async (user) => {
+        if (updatingId) return
+        const nextIsActive = user.status !== 'ACTIVE'
+
+        if (!user.isBackend) {
+            setUsersList((prev) =>
+                prev.map((u) =>
+                    u.id === user.id
+                        ? { ...u, status: nextIsActive ? 'ACTIVE' : 'BANNED' }
+                        : u
+                )
             )
-        )
+            return
+        }
+
+        const nextBackendStatus = nextIsActive ? 'APPROVED' : 'SUSPENDED'
+        setUpdatingId(user.id)
+
+        try {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+            const res = await fetch('/api/admin/users', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
+                    id: user.id,
+                    status: nextBackendStatus,
+                    ...(nextBackendStatus === 'SUSPENDED' ? { rejectionReason: 'Suspended by administrator' } : {}),
+                }),
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok || !json?.success) {
+                throw new Error(json?.message || 'Failed to update merchant status')
+            }
+
+            setUsersList((prev) =>
+                prev.map((u) =>
+                    u.id === user.id
+                        ? { ...u, status: nextIsActive ? 'ACTIVE' : 'BANNED', rawStatus: nextBackendStatus }
+                        : u
+                )
+            )
+            toast.success(`Merchant "${user.name}" ${nextIsActive ? 'reactivated' : 'suspended'}`)
+        } catch (err) {
+            toast.error(err.message || 'Failed to update status')
+        } finally {
+            setUpdatingId(null)
+        }
     }
 
     return (
         <div className="text-slate-600 mb-28 max-w-6xl space-y-8">
-            
             {/* Page Header */}
-            <div>
-                <h1 className="text-2xl text-slate-500">
-                    Platform <span className="text-slate-800 font-medium">Users & Merchants</span>
-                </h1>
-                <p className="text-sm text-slate-400 mt-1">
-                    Manage buyer accounts, merchant permissions, and platform administrators.
-                </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl text-slate-500">
+                        Platform <span className="text-slate-800 font-medium">Users & Merchants</span>
+                    </h1>
+                    <p className="text-sm text-slate-400 mt-1">
+                        Manage buyer accounts, merchant permissions, and platform administrators.
+                    </p>
+                </div>
+
+                <button
+                    type="button"
+                    onClick={() => { setLoading(true); fetchMerchants() }}
+                    className="self-start sm:self-auto p-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition flex items-center gap-2 text-xs font-semibold"
+                >
+                    <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+                </button>
             </div>
 
             {/* Filters & Search Bar */}
@@ -114,7 +195,7 @@ export default function AdminUsers() {
                 <div className="relative max-w-md w-full">
                     <input
                         type="text"
-                        placeholder="Search by name or email..."
+                        placeholder="Search by name, store, or email..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 focus:border-slate-800 outline-none text-slate-800 text-sm bg-white shadow-xs"
@@ -231,8 +312,9 @@ export default function AdminUsers() {
                                             {user.role !== 'ADMIN' && (
                                                 <button
                                                     type="button"
-                                                    onClick={() => toggleUserStatus(user.id)}
-                                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                                                    disabled={updatingId === user.id}
+                                                    onClick={() => toggleUserStatus(user)}
+                                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50 ${
                                                         user.status === 'ACTIVE'
                                                             ? 'bg-red-50 text-red-600 hover:bg-red-100'
                                                             : 'bg-green-50 text-green-700 hover:bg-green-100'

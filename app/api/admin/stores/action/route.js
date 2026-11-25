@@ -1,30 +1,13 @@
 import { NextResponse } from 'next/server'
 import { GRAPHQL_ENDPOINT } from '@/lib/apiClient'
+import {
+    APPROVE_STORE_MUTATION,
+    REJECT_STORE_MUTATION,
+    SUSPEND_STORE_MUTATION,
+    UNSUSPEND_STORE_MUTATION,
+} from '@/lib/graphql/store'
 
 const ADMIN_KEY = process.env.ADMIN_KEY
-
-const APPROVE_STORE_MUTATION = `
-  mutation ApproveStore($id: ID!) {
-    approveStore(id: $id) {
-      id
-      name
-      approvalStatus
-      updatedAt
-    }
-  }
-`
-
-const REJECT_STORE_MUTATION = `
-  mutation RejectStore($id: ID!, $reason: String!) {
-    rejectStore(id: $id, reason: $reason) {
-      id
-      name
-      approvalStatus
-      rejectionReason
-      updatedAt
-    }
-  }
-`
 
 export async function POST(request) {
     try {
@@ -46,9 +29,10 @@ export async function POST(request) {
         }
 
         const normalizedAction = (action || '').toLowerCase()
-        if (normalizedAction !== 'approve' && normalizedAction !== 'reject') {
+        const validActions = ['approve', 'reject', 'suspend', 'unsuspend']
+        if (!validActions.includes(normalizedAction)) {
             return NextResponse.json(
-                { success: false, message: 'Action must be either "approve" or "reject"' },
+                { success: false, message: 'Action must be one of: approve, reject, suspend, unsuspend' },
                 { status: 400 }
             )
         }
@@ -60,19 +44,28 @@ export async function POST(request) {
             )
         }
 
-        const query = normalizedAction === 'approve' ? APPROVE_STORE_MUTATION : REJECT_STORE_MUTATION
-        const variables = normalizedAction === 'approve' ? { id: storeId } : { id: storeId, reason: reason.trim() }
+        let query = APPROVE_STORE_MUTATION
+        let variables = { id: storeId }
+        if (normalizedAction === 'reject') {
+            query = REJECT_STORE_MUTATION
+            variables = { id: storeId, reason: reason.trim() }
+        } else if (normalizedAction === 'suspend') {
+            query = SUSPEND_STORE_MUTATION
+            variables = { id: storeId, reason: (reason && reason.trim()) || 'Suspended by administrator' }
+        } else if (normalizedAction === 'unsuspend') {
+            query = UNSUSPEND_STORE_MUTATION
+            variables = { id: storeId, ...(reason && reason.trim() ? { reason: reason.trim() } : {}) }
+        }
 
+        const authHeader = request.headers.get('authorization')
         const response = await fetch(GRAPHQL_ENDPOINT, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-Admin-Key': ADMIN_KEY,
+                ...(ADMIN_KEY ? { 'X-Admin-Key': ADMIN_KEY } : {}),
+                ...(authHeader ? { Authorization: authHeader } : {}),
             },
-            body: JSON.stringify({
-                query,
-                variables,
-            }),
+            body: JSON.stringify({ query, variables }),
             cache: 'no-store',
         })
 
@@ -93,15 +86,25 @@ export async function POST(request) {
             )
         }
 
-        const updatedStore = normalizedAction === 'approve' ? result.data?.approveStore : result.data?.rejectStore
+        const resultKeyMap = {
+            approve: 'approveStore',
+            reject: 'rejectStore',
+            suspend: 'suspendStore',
+            unsuspend: 'unsuspendStore',
+        }
+        const updatedStore = result.data?.[resultKeyMap[normalizedAction]]
+
+        const messageMap = {
+            approve: `Store "${updatedStore?.name || storeId}" has been approved successfully.`,
+            reject: `Store "${updatedStore?.name || storeId}" application was rejected.`,
+            suspend: `Store "${updatedStore?.name || storeId}" has been suspended.`,
+            unsuspend: `Store "${updatedStore?.name || storeId}" has been reactivated.`,
+        }
 
         return NextResponse.json({
             success: true,
             action: normalizedAction,
-            message:
-                normalizedAction === 'approve'
-                    ? `Store "${updatedStore?.name || storeId}" has been approved successfully.`
-                    : `Store "${updatedStore?.name || storeId}" application was rejected.`,
+            message: messageMap[normalizedAction],
             store: updatedStore,
         })
     } catch (err) {

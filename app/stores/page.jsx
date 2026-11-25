@@ -12,15 +12,33 @@ import { GET_ALL_STORES_QUERY } from "@/lib/graphql/store"
 export default function AdminStores() {
     const [stores, setStores] = useState([])
     const [loading, setLoading] = useState(true)
+    const [updatingId, setUpdatingId] = useState(null)
 
     const fetchStores = async () => {
         try {
-            const data = await graphqlRequest(GET_ALL_STORES_QUERY, { limit: 50 })
-            const allStores = data?.stores?.stores || []
-            const activeStores = allStores.filter(s =>
-                s.approvalStatus === 'APPROVED' || s.status === 'approved'
+            let allStores = []
+            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+            const res = await fetch('/api/admin/stores/pending?status=ALL&limit=100', {
+                cache: 'no-store',
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            }).catch(() => null)
+
+            if (res && res.ok) {
+                const json = await res.json().catch(() => null)
+                if (json?.success && Array.isArray(json.stores)) {
+                    allStores = json.stores
+                }
+            }
+
+            if (allStores.length === 0) {
+                const data = await graphqlRequest(GET_ALL_STORES_QUERY, { limit: 50 })
+                allStores = data?.stores?.stores || []
+            }
+
+            const activeOrSuspended = allStores.filter(s =>
+                ['APPROVED', 'SUSPENDED', 'approved', 'suspended'].includes(s.approvalStatus || s.status || '')
             )
-            setStores(activeStores.length > 0 ? activeStores : (allStores.length > 0 ? allStores : storesDummyData))
+            setStores(activeOrSuspended)
         } catch (err) {
             console.error("Failed to load stores from API:", err)
             setStores(storesDummyData)
@@ -29,14 +47,50 @@ export default function AdminStores() {
         }
     }
 
-    const toggleIsActive = async (storeId) => {
-        setStores(prev => prev.map(s => {
-            if (s.id === storeId) {
-                return { ...s, isActive: !s.isActive }
+    const toggleIsActive = async (store) => {
+        if (updatingId) return
+        const isCurrentlyActive = store.isActive !== false && store.approvalStatus !== 'SUSPENDED'
+        const action = isCurrentlyActive ? 'suspend' : 'unsuspend'
+        setUpdatingId(store.id)
+
+        try {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+            const res = await fetch('/api/admin/stores/action', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
+                    storeId: store.id,
+                    action,
+                    reason: isCurrentlyActive
+                        ? 'Suspended from admin dashboard'
+                        : 'Reactivated from admin dashboard',
+                }),
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok || !json?.success) {
+                throw new Error(json?.message || `Failed to ${action} store`)
             }
-            return s
-        }))
-        toast.success("Store visibility toggled")
+
+            setStores(prev => prev.map(s => {
+                if (s.id === store.id) {
+                    return {
+                        ...s,
+                        ...(json.store || {}),
+                        isActive: !isCurrentlyActive,
+                        approvalStatus: json.store?.approvalStatus || (isCurrentlyActive ? 'SUSPENDED' : 'APPROVED'),
+                    }
+                }
+                return s
+            }))
+            toast.success(json.message || `Store ${isCurrentlyActive ? 'suspended' : 'reactivated'}`)
+        } catch (err) {
+            toast.error(err.message || 'Failed to update store status')
+        } finally {
+            setUpdatingId(null)
+        }
     }
 
     useEffect(() => {
@@ -77,12 +131,15 @@ export default function AdminStores() {
 
                             {/* Actions */}
                             <div className="flex items-center gap-3 pt-2 shrink-0">
-                                <span className="text-xs font-semibold text-slate-600">Active</span>
+                                <span className="text-xs font-semibold text-slate-600">
+                                    {store.approvalStatus === 'SUSPENDED' ? 'Suspended' : 'Active'}
+                                </span>
                                 <label className="relative inline-flex items-center cursor-pointer text-gray-900">
                                     <input
                                         type="checkbox"
                                         className="sr-only peer"
-                                        onChange={() => toggleIsActive(store.id)}
+                                        disabled={updatingId === store.id}
+                                        onChange={() => toggleIsActive(store)}
                                         checked={store.isActive !== false && store.approvalStatus !== 'SUSPENDED'}
                                     />
                                     <div className="w-9 h-5 bg-slate-300 rounded-full peer peer-checked:bg-emerald-600 transition-colors duration-200"></div>
