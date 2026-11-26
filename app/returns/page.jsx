@@ -10,6 +10,12 @@ import {
     X
 } from 'lucide-react'
 import Loading from '@/components/Loading'
+import { graphqlRequest } from '@/lib/apiClient'
+import {
+    GET_EXCHANGE_QUERY,
+    VERIFY_EXCHANGE_PRODUCT_MUTATION,
+    RESOLVE_EXCHANGE_MISMATCH_MUTATION
+} from '@/lib/graphql/return'
 
 function authHeaders() {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -28,6 +34,43 @@ export default function AdminReturns() {
     const [actingId, setActingId] = useState(null)
     const [rejectTarget, setRejectTarget] = useState(null)
     const [rejectReason, setRejectReason] = useState('')
+    const [exchangeLookupId, setExchangeLookupId] = useState('')
+    const [exchangeData, setExchangeData] = useState(null)
+    const [loadingExchange, setLoadingExchange] = useState(false)
+
+    const handleLookupExchange = async (e) => {
+        e?.preventDefault()
+        if (!exchangeLookupId.trim()) return
+        setLoadingExchange(true)
+        try {
+            const res = await graphqlRequest(GET_EXCHANGE_QUERY, { id: exchangeLookupId.trim() })
+            if (res?.exchange) {
+                setExchangeData(res.exchange)
+                toast.success('Exchange loaded')
+            } else {
+                toast.error('Exchange not found')
+            }
+        } catch (err) {
+            toast.error(err.message || 'Exchange lookup failed')
+        } finally {
+            setLoadingExchange(false)
+        }
+    }
+
+    const handleResolveExchange = async (action) => {
+        if (!exchangeData?.id) return
+        try {
+            const res = await graphqlRequest(RESOLVE_EXCHANGE_MISMATCH_MUTATION, {
+                input: { exchangeId: exchangeData.id, action }
+            })
+            if (res?.resolveExchangeMismatch) {
+                setExchangeData((prev) => ({ ...prev, ...res.resolveExchangeMismatch }))
+                toast.success(`Exchange updated: ${action}`)
+            }
+        } catch (err) {
+            toast.error(err.message || 'Failed to resolve exchange')
+        }
+    }
 
     const fetchReturns = async (status = statusFilter) => {
         try {
@@ -215,6 +258,54 @@ export default function AdminReturns() {
                     </div>
                 </div>
             )}
+
+            {/* Admin Exchange Lookup & Resolution */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                <div>
+                    <h2 className="text-base font-bold text-slate-800">Trade-In Exchange Lookup &amp; Resolution</h2>
+                    <p className="text-xs text-slate-400">Inspect an exchange by ID and resolve valuation mismatches.</p>
+                </div>
+                <form onSubmit={handleLookupExchange} className="flex gap-2 max-w-lg text-xs">
+                    <input
+                        type="text"
+                        value={exchangeLookupId}
+                        onChange={(e) => setExchangeLookupId(e.target.value)}
+                        placeholder="Enter Exchange UUID..."
+                        className="flex-1 px-3 py-2 rounded-xl border border-slate-300 outline-none focus:border-slate-800"
+                    />
+                    <button
+                        type="submit"
+                        disabled={loadingExchange}
+                        className="px-4 py-2 bg-slate-900 text-white font-semibold rounded-xl disabled:opacity-50"
+                    >
+                        {loadingExchange ? 'Loading...' : 'Lookup Exchange'}
+                    </button>
+                </form>
+                {exchangeData && (
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                        <div>
+                            <p className="font-bold text-slate-800">{exchangeData.oldBrand} {exchangeData.oldModel}</p>
+                            <p className="text-slate-500">Status: <strong>{exchangeData.status}</strong> • Discount: ${exchangeData.finalDiscount ?? exchangeData.estimatedDiscount}</p>
+                        </div>
+                        <div className="flex gap-2">
+                            <button
+                                type="button"
+                                onClick={() => handleResolveExchange('PAY_DIFFERENCE')}
+                                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold"
+                            >
+                                Pay Difference
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleResolveExchange('CANCEL_EXCHANGE')}
+                                className="px-3 py-1.5 bg-rose-600 text-white rounded-lg font-semibold"
+                            >
+                                Cancel Exchange
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
     )
 }

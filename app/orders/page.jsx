@@ -6,9 +6,12 @@ import {
     Search,
     Eye,
     X,
-    RefreshCw
+    RefreshCw,
+    Truck
 } from 'lucide-react'
 import { assets, orderDummyData } from '@/assets/assets'
+import { graphqlRequest } from '@/lib/apiClient'
+import { GET_DELIVERY_BY_ORDER_QUERY, CANCEL_DELIVERY_MUTATION } from '@/lib/graphql/delivery'
 
 function normalizeOrder(o) {
     let parsedAddr = null
@@ -50,6 +53,38 @@ export default function AdminMasterOrders() {
     const [updatingStatus, setUpdatingStatus] = useState(false)
     const [refundLoading, setRefundLoading] = useState(false)
     const [refundReason, setRefundReason] = useState('')
+    const [modalDelivery, setModalDelivery] = useState(null)
+    const [loadingDelivery, setLoadingDelivery] = useState(false)
+
+    const openOrderModal = async (order) => {
+        setActiveModalOrder(order)
+        setModalDelivery(null)
+        setLoadingDelivery(true)
+        try {
+            const res = await graphqlRequest(GET_DELIVERY_BY_ORDER_QUERY, { orderId: String(order.id) })
+            if (res?.deliveryByOrder) {
+                setModalDelivery(res.deliveryByOrder)
+            }
+        } catch {
+            // no delivery yet
+        } finally {
+            setLoadingDelivery(false)
+        }
+    }
+
+    const handleCancelDelivery = async (deliveryId) => {
+        const reason = prompt('Enter reason for cancelling delivery:')
+        if (!reason) return
+        try {
+            const res = await graphqlRequest(CANCEL_DELIVERY_MUTATION, { id: String(deliveryId), reason })
+            if (res?.cancelDelivery) {
+                setModalDelivery(prev => prev ? { ...prev, status: res.cancelDelivery.status || 'CANCELLED' } : prev)
+                toast.success('Delivery cancelled')
+            }
+        } catch (err) {
+            toast.error(err.message || 'Failed to cancel delivery')
+        }
+    }
 
     const handleBackendLookup = async (e) => {
         e.preventDefault()
@@ -295,7 +330,7 @@ export default function AdminMasterOrders() {
                                         <td className="py-4 px-6 text-right">
                                             <button
                                                 type="button"
-                                                onClick={() => setActiveModalOrder(order)}
+                                                onClick={() => openOrderModal(order)}
                                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition"
                                             >
                                                 <Eye size={13} /> View
@@ -344,6 +379,48 @@ export default function AdminMasterOrders() {
                                     <option key={st} value={st}>{st}</option>
                                 ))}
                             </select>
+                        </div>
+
+                        {/* Delivery Partner & Tracking */}
+                        <div className="bg-slate-50 p-4 rounded-2xl text-xs space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                                    <Truck size={14} className="text-indigo-600" /> Delivery Assignment &amp; Tracking
+                                </span>
+                                {modalDelivery && modalDelivery.status !== 'DELIVERED' && modalDelivery.status !== 'CANCELLED' && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleCancelDelivery(modalDelivery.id)}
+                                        className="text-rose-600 hover:underline font-semibold"
+                                    >
+                                        Cancel Delivery
+                                    </button>
+                                )}
+                            </div>
+                            {loadingDelivery ? (
+                                <p className="text-slate-400">Checking delivery record...</p>
+                            ) : modalDelivery ? (
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white p-3 rounded-xl border border-slate-200">
+                                    <div>
+                                        <span className="text-[10px] text-slate-400 block">Partner</span>
+                                        <span className="font-bold text-slate-800">{modalDelivery.deliveryPartner}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-[10px] text-slate-400 block">Tracking #</span>
+                                        <span className="font-mono font-bold text-slate-800">{modalDelivery.trackingNumber || 'Pending'}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-[10px] text-slate-400 block">Status</span>
+                                        <span className="font-bold text-indigo-700">{modalDelivery.status}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-[10px] text-slate-400 block">Contact</span>
+                                        <span className="text-slate-700">{modalDelivery.contactNumber || '-'}</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                <p className="text-slate-400 italic">No delivery dispatch record created yet for this order.</p>
+                            )}
                         </div>
 
                         {/* Customer & Shipping Info */}

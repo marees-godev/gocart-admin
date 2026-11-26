@@ -77,6 +77,7 @@ function mapMerchantToRow(m) {
 export default function AdminUsers() {
     const [searchQuery, setSearchQuery] = useState('')
     const [selectedRole, setSelectedRole] = useState('ALL')
+    const [selectedStatus, setSelectedStatus] = useState('ALL')
     const [usersList, setUsersList] = useState([])
     const [loading, setLoading] = useState(true)
     const [updatingId, setUpdatingId] = useState(null)
@@ -113,8 +114,47 @@ export default function AdminUsers() {
             (user.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
             (user.storeName || '').toLowerCase().includes(searchQuery.toLowerCase())
         const matchesRole = selectedRole === 'ALL' || user.role === selectedRole
-        return matchesSearch && matchesRole
+        const matchesStatus = selectedStatus === 'ALL' || (user.rawStatus || user.status) === selectedStatus
+        return matchesSearch && matchesRole && matchesStatus
     })
+
+    const updateMerchantStatus = async (user, nextBackendStatus, rejectionReason = '') => {
+        if (updatingId) return
+        setUpdatingId(user.id)
+        try {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+            const res = await fetch('/api/admin/users', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
+                    id: user.id,
+                    status: nextBackendStatus,
+                    ...(rejectionReason ? { rejectionReason } : {}),
+                }),
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok || !json?.success) {
+                throw new Error(json?.message || 'Failed to update merchant status')
+            }
+
+            const mappedStatus = nextBackendStatus === 'APPROVED' ? 'ACTIVE' : nextBackendStatus === 'SUSPENDED' ? 'BANNED' : nextBackendStatus
+            setUsersList((prev) =>
+                prev.map((u) =>
+                    u.id === user.id
+                        ? { ...u, status: mappedStatus, rawStatus: nextBackendStatus }
+                        : u
+                )
+            )
+            toast.success(`Merchant "${user.name}" updated to ${nextBackendStatus}`)
+        } catch (err) {
+            toast.error(err.message || 'Failed to update status')
+        } finally {
+            setUpdatingId(null)
+        }
+    }
 
     const toggleUserStatus = async (user) => {
         if (updatingId) return
@@ -221,6 +261,24 @@ export default function AdminUsers() {
                 </div>
             </div>
 
+            {/* Status Filter Pills */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                {['ALL', 'PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED'].map((st) => (
+                    <button
+                        key={st}
+                        type="button"
+                        onClick={() => setSelectedStatus(st)}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition ${
+                            selectedStatus === st
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                    >
+                        {st === 'ALL' ? 'All Statuses' : st}
+                    </button>
+                ))}
+            </div>
+
             {/* Users Table */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
@@ -310,18 +368,47 @@ export default function AdminUsers() {
 
                                         <td className="py-4 px-6 text-right">
                                             {user.role !== 'ADMIN' && (
-                                                <button
-                                                    type="button"
-                                                    disabled={updatingId === user.id}
-                                                    onClick={() => toggleUserStatus(user)}
-                                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50 ${
-                                                        user.status === 'ACTIVE'
-                                                            ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                                                            : 'bg-green-50 text-green-700 hover:bg-green-100'
-                                                    }`}
-                                                >
-                                                    {user.status === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
-                                                </button>
+                                                <div className="inline-flex items-center gap-2">
+                                                    {user.isBackend && (user.rawStatus === 'PENDING' || user.rawStatus === 'REJECTED') && (
+                                                        <button
+                                                            type="button"
+                                                            disabled={updatingId === user.id}
+                                                            onClick={() => updateMerchantStatus(user, 'APPROVED')}
+                                                            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition disabled:opacity-50"
+                                                        >
+                                                            Approve
+                                                        </button>
+                                                    )}
+                                                    {user.isBackend && user.rawStatus === 'PENDING' && (
+                                                        <button
+                                                            type="button"
+                                                            disabled={updatingId === user.id}
+                                                            onClick={() => {
+                                                                const reason = window.prompt(`Reject merchant "${user.name}"? Enter reason:`, 'Incomplete KYC / business details')
+                                                                if (reason && reason.trim()) {
+                                                                    updateMerchantStatus(user, 'REJECTED', reason.trim())
+                                                                }
+                                                            }}
+                                                            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 transition disabled:opacity-50"
+                                                        >
+                                                            Reject
+                                                        </button>
+                                                    )}
+                                                    {(!user.isBackend || user.rawStatus === 'APPROVED' || user.rawStatus === 'SUSPENDED') && (
+                                                        <button
+                                                            type="button"
+                                                            disabled={updatingId === user.id}
+                                                            onClick={() => toggleUserStatus(user)}
+                                                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50 ${
+                                                                user.status === 'ACTIVE'
+                                                                    ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                                                                    : 'bg-green-50 text-green-700 hover:bg-green-100'
+                                                            }`}
+                                                        >
+                                                            {user.status === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
+                                                        </button>
+                                                    )}
+                                                </div>
                                             )}
                                         </td>
                                     </tr>

@@ -301,7 +301,19 @@ export default function AdminApprove() {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                        href="/users"
+                        className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition text-xs font-semibold shadow-xs"
+                    >
+                        Merchant Approvals
+                    </Link>
+                    <Link
+                        href="/delivery-partners"
+                        className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition text-xs font-semibold shadow-xs"
+                    >
+                        Delivery Partner Approvals
+                    </Link>
                     <button
                         onClick={fetchStores}
                         disabled={loading}

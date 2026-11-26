@@ -131,10 +131,10 @@ export default function AdminDeliveryPartners() {
             </form>
 
             {partners.length === 0 ? (
-                <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
-                    <h2 className="text-lg font-bold text-slate-900">No Delivery Partner Appeals Found</h2>
-                    <p className="text-sm text-slate-500 mt-1">
-                        There are currently no appealed delivery partners, or try looking up a specific Partner ID above.
+                <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center space-y-2">
+                    <h2 className="text-lg font-bold text-slate-900">No Appealed Delivery Partners</h2>
+                    <p className="text-sm text-slate-500 max-w-xl mx-auto">
+                        The backend GraphQL API (<code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">appealDeliveryPartners</code>) only lists partners with <strong>APPEALED</strong> status. To approve, reject, or verify GSTIN for a newly registered (<strong>PENDING</strong>) delivery agent, enter their Partner ID above.
                     </p>
                 </div>
             ) : (

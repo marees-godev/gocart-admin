@@ -7,7 +7,7 @@ import { storesDummyData } from "@/assets/assets"
 import StoreInfo from "@/components/admin/StoreInfo"
 import Loading from "@/components/Loading"
 import { graphqlRequest } from "@/lib/apiClient"
-import { GET_ALL_STORES_QUERY } from "@/lib/graphql/store"
+import { GET_ALL_STORES_QUERY, CLOSE_STORE_MUTATION } from "@/lib/graphql/store"
 
 export default function AdminStores() {
     const [stores, setStores] = useState([])
@@ -145,6 +145,23 @@ export default function AdminStores() {
                                     <div className="w-9 h-5 bg-slate-300 rounded-full peer peer-checked:bg-emerald-600 transition-colors duration-200"></div>
                                     <span className="dot absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-transform duration-200 ease-in-out peer-checked:translate-x-4"></span>
                                 </label>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        const reason = prompt(`Close store "${store.name}" permanently? Enter reason:`)
+                                        if (!reason) return
+                                        try {
+                                            await graphqlRequest(CLOSE_STORE_MUTATION, { id: store.id, reason })
+                                            setStores((prev) => prev.filter((s) => s.id !== store.id))
+                                            toast.success('Store closed')
+                                        } catch (err) {
+                                            toast.error(err.message || 'Failed to close store')
+                                        }
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 cursor-pointer"
+                                >
+                                    Close
+                                </button>
                             </div>
                         </div>
                     ))}

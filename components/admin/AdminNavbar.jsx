@@ -2,9 +2,13 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ShieldCheck, LogOut, ExternalLink } from 'lucide-react'
+import { ShieldCheck, LogOut, ExternalLink, Bell } from 'lucide-react'
+import { useState } from 'react'
 import { useDispatch } from 'react-redux'
 import { logout } from '@/lib/features/auth/authSlice'
+import { graphqlRequest } from '@/lib/apiClient'
+import { SEND_NOTIFICATION_MUTATION } from '@/lib/graphql/notification'
+import toast from 'react-hot-toast'
 
 const AdminNavbar = () => {
     const router = useRouter()
@@ -34,6 +38,29 @@ const AdminNavbar = () => {
             </div>
 
             <div className="flex items-center gap-4">
+                <button
+                    type="button"
+                    onClick={async () => {
+                        const userId = prompt('Target User ID to notify:')
+                        if (!userId) return
+                        const subject = prompt('Notification subject:')
+                        if (!subject) return
+                        const content = prompt('Notification message:')
+                        if (!content) return
+                        try {
+                            await graphqlRequest(SEND_NOTIFICATION_MUTATION, {
+                                input: { userId, channel: 'IN_APP', subject, content }
+                            })
+                            toast.success('Notification sent!')
+                        } catch (err) {
+                            toast.error(err.message || 'Failed to send notification')
+                        }
+                    }}
+                    className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg border border-indigo-200 transition cursor-pointer"
+                    title="Send in-app notification to a user"
+                >
+                    <Bell size={13} /> Notify User
+                </button>
                 <a
                     href="http://localhost:3000"
                     target="_blank"
